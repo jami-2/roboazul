@@ -81,9 +81,9 @@ Adafruit_TCS34725 tcs0(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 Adafruit_TCS34725 tcs1(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 
 // Variáveis do PID
-float Kp = 0.1;  // Ganho Proporcional
-float Ki = 0.001; // Ganho Integral
-float Kd = 0.2;  // Ganho Derivativo
+#define Kp 0.1f    // Ganho Proporcional  
+#define Ki 0.001f  // Ganho Integral  
+#define Kd 0.2f    // Ganho Derivativo  
 
 int erro = 0;
 int erroAnterior = 0;
