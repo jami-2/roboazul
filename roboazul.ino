@@ -178,7 +178,7 @@ void loop() {
         break;
       }
 
-      cor = detectarCor(0);
+      int cor = detectarCor(0);
       if(strcmp(cor, "colorido") == 0) {
         estadoAtual = SALA_DE_RESGATE;
         break;
@@ -217,6 +217,7 @@ void loop() {
       
     case PARADO:
       pararMotores();
+      printV("PRONTO!");
       break;
   }
 }
@@ -397,4 +398,60 @@ int lerUltrassonicoLateral(int angulo) {
   printD("): "); printlnD(distancia);
   
   return distancia;
+}
+
+// Adicione estas implementações no seu código Arduino
+
+void desligarLEDs() {
+  digitalWrite(LEDA, LOW);
+  digitalWrite(LEDB, LOW);
+}
+
+void ligarLEDs() {
+  digitalWrite(LEDA, HIGH);
+  digitalWrite(LEDB, HIGH);
+}
+
+void pararMotores() {
+  motorFrenteEsquerdo.run(RELEASE);
+  motorFrenteDireito.run(RELEASE);
+  motorTrasEsquerdo.run(RELEASE);
+  motorTrasDireito.run(RELEASE);
+}
+
+void tcaSelect(uint8_t channel) {
+  if (channel > 7) return;
+  Wire.beginTransmission(TCAADDR);
+  Wire.write(1 << channel);
+  Wire.endTransmission();
+}
+
+void vencerResistenciaInicial() {
+  controlarMotores(1, 1, VEL_RESISTENCIA);
+  delay(100);
+}
+
+const char* detectarCor(uint8_t canal) {
+  if(canal > 1 || !corSensores[canal].inicializado) return "erro";
+  
+  tcaSelect(canal);
+  uint16_t r, g, b, c;
+  corSensores[canal].tcs.getRawData(&r, &g, &b, &c);
+  
+  if(r < 3000 && g < 4400 && b < 3400) return "preto";
+  if(r > 6000 && g > 7500 && b > 6500) return "branco";
+  if(r > 9000 && g < 5000 && b < 5000) return "vermelho";
+  return "colorido";
+}
+
+void controlarMotores(int esqFrente, int dirFrente, int velocidade) {
+  motorFrenteEsquerdo.setSpeed(velocidade);
+  motorFrenteDireito.setSpeed(velocidade);
+  motorTrasEsquerdo.setSpeed(velocidade);
+  motorTrasDireito.setSpeed(velocidade);
+  
+  motorFrenteEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
+  motorTrasEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
+  motorFrenteDireito.run(dirFrente ? FORWARD : BACKWARD);
+  motorTrasDireito.run(dirFrente ? FORWARD : BACKWARD);
 }
