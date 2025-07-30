@@ -147,7 +147,7 @@ void calibrarSensoresQTR() {
   Serial.println();
 }
 
-void lerSensoresQTR() {
+int lerSensoresQTR() {
   // Lê os sensores QTR e armazena os valores em sensorValues
   int position = qtrrc.readLine(sensorValues);
   
@@ -253,18 +253,6 @@ void loop() {
   }
 }
 
-const char* detectarCor(uint8_t canal) {
-  if(canal > 1 || !corSensores[canal].inicializado) return "erro";
-  
-  tcaSelect(canal);
-  uint16_t r, g, b, c;
-  corSensores[canal].tcs.getRawData(&r, &g, &b, &c);
-  
-  if(r < 3000 && g < 4400 && b < 3400) return "preto";
-  if(r > 6000 && g > 7500 && b > 6500) return "branco";
-  return "colorido";
-}
-
 void resolverBifurcacao() {
   ligarLEDs();
   const char* corA = detectarCor(0);
@@ -305,6 +293,7 @@ void resolverBifurcacao() {
   }
 }
 
+// Corrigir a função desviarObstaculo() para usar os sensores QTR
 void desviarObstaculo() {
   pararMotores();
   delay(100);
@@ -318,8 +307,18 @@ void desviarObstaculo() {
   unsigned long ultimaVirada = millis();
   
   while(true) {
-    lerSensores();
-    if(sensores[0].valor || sensores[1].valor || sensores[2].valor || sensores[3].valor) {
+    lerSensoresQTR();
+    
+    // Verifica se algum sensor detectou a linha
+    bool linhaDetectada = false;
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      if (sensorValues[i] > 500) { // Ajuste este valor conforme a calibração
+        linhaDetectada = true;
+        break;
+      }
+    }
+    
+    if(linhaDetectada) {
       pararMotores();
       virarComGiro(90, ESQUERDA);
       return;
@@ -340,16 +339,16 @@ void desviarObstaculo() {
   }
 }
 
-void controlarMotores(int esqFrente, int dirFrente, int velocidade) {
-  motorFrenteEsquerdo.setSpeed(velocidade);
-  motorFrenteDireito.setSpeed(velocidade);
-  motorTrasEsquerdo.setSpeed(velocidade);
-  motorTrasDireito.setSpeed(velocidade);
+void controlarMotores(int velocidadeEsq, int velocidadeDir) {
+  motorFrenteEsquerdo.setSpeed(abs(velocidadeEsq));
+  motorFrenteDireito.setSpeed(abs(velocidadeDir));
+  motorTrasEsquerdo.setSpeed(abs(velocidadeEsq));
+  motorTrasDireito.setSpeed(abs(velocidadeDir));
   
-  motorFrenteEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
-  motorTrasEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
-  motorFrenteDireito.run(dirFrente ? FORWARD : BACKWARD);
-  motorTrasDireito.run(dirFrente ? FORWARD : BACKWARD);
+  motorFrenteEsquerdo.run(velocidadeEsq > 0 ? FORWARD : BACKWARD);
+  motorTrasEsquerdo.run(velocidadeEsq > 0 ? FORWARD : BACKWARD);
+  motorFrenteDireito.run(velocidadeDir > 0 ? FORWARD : BACKWARD);
+  motorTrasDireito.run(velocidadeDir > 0 ? FORWARD : BACKWARD);
 }
 
 void pararMotores() {
@@ -360,23 +359,29 @@ void pararMotores() {
 }
 
 void andarReto() {
-  controlarMotores(1, 1, VEL_NORMAL);
+  controlarMotores(VEL_NORMAL, VEL_NORMAL);
 }
 
 void andarRapido() {
-  controlarMotores(1, 1, 200);
+  controlarMotores(200, 200);
 }
 
 void andarTras() {
-  controlarMotores(0, 0, VEL_NORMAL + 10);
+  controlarMotores(-VEL_NORMAL, -VEL_NORMAL);
 }
 
 void virar(int direcao) {
-  controlarMotores(direcao, !direcao, VEL_CURVA);
+  // Se direcao = 1 (direita), motor esquerdo vai pra frente (velocidade positiva) e direito pra trás (velocidade negativa)
+  // Se direcao = 0 (esquerda), motor direito vai pra frente (velocidade positiva) e esquerdo pra trás (velocidade negativa)
+  int velocidadeEsq = direcao ? VEL_CURVA : -VEL_CURVA;
+  int velocidadeDir = direcao ? -VEL_CURVA : VEL_CURVA;
+  controlarMotores(velocidadeEsq, velocidadeDir);
 }
 
 void virarForte(int direcao) {
-  controlarMotores(direcao, !direcao, VEL_CURVA_EXTREMA);
+  int velocidadeEsq = direcao ? VEL_CURVA_EXTREMA : -VEL_CURVA_EXTREMA;
+  int velocidadeDir = direcao ? -VEL_CURVA_EXTREMA : VEL_CURVA_EXTREMA;
+  controlarMotores(velocidadeEsq, velocidadeDir);
 }
 
 void virarComGiro(float anguloAlvo, int direcao) {
@@ -404,10 +409,17 @@ void entrarSalaResgate() {
 void executarComportamentoSalaResgate() {
   while(estadoAtual == SALA_DE_RESGATE) {
     // 1. Verificar se encontrou linha preta (saída)
-    lerSensores();
-    int posicao = calcularPosicaoLinha();
+    float posicao = calcularPosicaoLinha();
     
-    if(posicao == -999) { // Todos sensores ativos (linha preta)
+    // Verifica se todos os sensores estão ativos (linha preta)
+    bool todosAtivos = true;
+    for (int i = 0; i < NUM_SENSORS; i++) {
+      if (sensorValues[i] < 500) { // Ajuste este valor conforme a calibração
+        todosAtivos = false;
+      }
+    }
+    
+    if(todosAtivos) { // Todos sensores ativos (linha preta)
       printlnA("Linha de saida detectada!");
       pararMotores();
       delay(1000);
@@ -419,9 +431,9 @@ void executarComportamentoSalaResgate() {
     andarReto();
     
     // 3. Verificar obstáculo frontal
-    int distanciaFrontal = lerUltrassonicoFrontal();
+    int distanciaFrontal = sonar.ping_cm();
     
-    if(distanciaFrontal < DISTANCIA_PARADA) {
+    if(distanciaFrontal < DISTANCIA_PARADA && distanciaFrontal != 0) {
       pararMotores();
       printlnA("Obstaculo frontal detectado!");
       
@@ -472,4 +484,46 @@ int lerUltrassonicoLateral(int angulo) {
   printD("): "); printlnD(distancia);
   
   return distancia;
+}
+
+
+void vencerResistenciaInicial() {
+  controlarMotores(VEL_RESISTENCIA, VEL_RESISTENCIA);
+  delay(100);
+}
+
+const char* detectarCor(uint8_t canal) {
+  if(canal > 1 || !corSensores[canal].inicializado) return "erro";
+  
+  tcaSelect(canal);
+  uint16_t r, g, b, c;
+  corSensores[canal].tcs.getRawData(&r, &g, &b, &c);
+  
+  if(r < 3000 && g < 4400 && b < 3400) return "preto";
+  if(r > 6000 && g > 7500 && b > 6500) return "branco";
+  if(r > 9000 && g < 5000 && b < 5000) return "vermelho";
+  return "colorido";
+}
+
+void desligarLEDs() {
+  digitalWrite(LEDA, LOW);
+  digitalWrite(LEDB, LOW);
+  delay(200);
+}
+
+void ligarLEDs() {
+  digitalWrite(LEDA, HIGH);
+  digitalWrite(LEDB, HIGH);
+  delay(200);
+}
+
+void tcaSelect(uint8_t channel) {
+  if(channel > 7) return;
+  Wire.beginTransmission(TCAADDR);
+  Wire.write(1 << channel);
+  Wire.endTransmission();
+}
+
+void lerSensores() {
+  return lerSensoresQTR();
 }
