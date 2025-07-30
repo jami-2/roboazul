@@ -17,6 +17,7 @@
 // porque este código não foi testado ainda em hardware
 // eu realmente espero que a gente termine a tempo.
 
+Servo servoUltrassonico;
 
 // Configurações de hardware
 #define TRIGGER_PIN  48
@@ -28,10 +29,16 @@
 #define LEDA 46
 #define LEDB 47
 
-// Constantes de configuração
+// Constantes PID
+#define KP 0.1  // Ganho Proporcional (ajuste fino necessário)
+#define KI 0.001 // Ganho Integral
+#define KD 0.5  // Ganho Derivativo
+#define VEL_BASE 100  // Velocidade base dos motores
+
+// Outras constantes
 #define TEMPO_PRE90 1000
 #define TEMPO_ORBITA 2000
-#define VEL_NORMAL 88
+#define VEL_NORMAL 130
 #define VEL_RESISTENCIA 120
 #define VEL_CURVA 140
 #define VEL_CURVA_EXTREMA 220
@@ -45,13 +52,20 @@
 #define DISTANCIA_PARADA 15
 #define DISTANCIA_MINIMA_VIRADA 10
 
-// Configuração dos sensores QTR
-#define NUM_SENSORS 4      // Número de sensores QTR
-#define TIMEOUT 2500       // Tempo de espera para o sensor em microssegundos
-#define EMITTER_PIN 2      // Pino para controle do LED IR (pode ser QTR_NO_EMITTER_PIN)
+#define NUM_SENSORS 8
+#define TIMEOUT 2500
+#define EMITTER_PIN QTR_NO_EMITTER_PIN
+#define LINHA_PRETA 0        // 0 para linha preta, 1 para linha branca
+#define LIMITE_PERDA_LINHA 200 // Valor mínimo para considerar linha detectada
+#define POSICAO_MAXIMA (NUM_SENSORS-1)*1000 // 7000 para 8 sensores
 
-Servo servoUltrassonico;
-QTRSensorsRC qtrrc((unsigned char[]) {A0, A1, A2, A3}, NUM_SENSORS, TIMEOUT, EMITTER_PIN);
+// Variáveis PID
+float erroAnterior = 0;
+float integral = 0;
+
+// Pinos dos sensores QTR
+const uint8_t pinosSensores[NUM_SENSORS] = {A0, A1, A2, A3, A4, A5, A6, A7};
+QTRSensorsRC qtrrc(pinosSensores, NUM_SENSORS, TIMEOUT, EMITTER_PIN);
 unsigned int sensorValues[NUM_SENSORS];
 
 // Estados do robô
@@ -188,11 +202,46 @@ float calcularPosicaoLinha() {
   // Retorna a posição relativa da linha (0-3000, com 1500 sendo o centro)
   return (position - 1500) / 1000.0; // Normaliza para -1.5 a +1.5
 }
+float calcularPID(float erro) {
+  integral += erro;
+  float derivativo = erro - erroAnterior;
+  erroAnterior = erro;
+  
+  float saidaPID = KP * erro + KI * integral + KD * derivativo;
+  return saidaPID;
+}
+
+void seguirLinhaPID() {
+  // Lê a posição da linha (0-7000, com 3500 sendo o centro)
+  uint16_t position = qtrrc.readLine(sensorValues);
+  
+  // Calcula o erro (normalizado entre -1 e 1)
+  float erro = (position - 3500) / 3500.0;
+  
+  // Calcula a correção PID
+  float correcao = calcularPID(erro);
+  
+  // Aplica a correção às velocidades dos motores
+  int velocidadeEsquerda = VEL_BASE - (correcao * VEL_BASE);
+  int velocidadeDireita = VEL_BASE + (correcao * VEL_BASE);
+  
+  // Limita as velocidades para valores válidos
+  velocidadeEsquerda = constrain(velocidadeEsquerda, -255, 255);
+  velocidadeDireita = constrain(velocidadeDireita, -255, 255);
+  
+  // Controla os motores
+  controlarMotores(velocidadeEsquerda, velocidadeDireita);
+  
+  // Debug (opcional)
+  Serial.print("Erro: "); Serial.print(erro);
+  Serial.print(" Correcao: "); Serial.print(correcao);
+  Serial.print(" VelEsq: "); Serial.print(velocidadeEsquerda);
+  Serial.print(" VelDir: "); Serial.println(velocidadeDireita);
+}
 
 void loop() {
   debugHandle();
 
-  // Máquina de estados principal
   switch(estadoAtual) {
     case INICIALIZANDO:
       estadoAtual = SEGUINDO_LINHA;
@@ -216,20 +265,8 @@ void loop() {
         break;
       }
       
-      float media = calcularPosicaoLinha();
-    
-      // Verificação de bifurcação
-      if(media == 69) {
-        estadoAtual = RESOLVENDO_BIFURCACAO;
-        break;
-      }
-        
-      // Controle normal de seguimento
-      if(media < -1.5) virarForte(ESQUERDA);
-      else if(media > 1.5) virarForte(DIREITA);
-      else if(media < -0.7) virar(ESQUERDA);
-      else if(media > 0.7) virar(DIREITA);
-      else andarReto();
+      // Substitui o controle antigo pelo PID
+      seguirLinhaPID();
       break;
       
     case RESOLVENDO_BIFURCACAO:
@@ -412,7 +449,7 @@ void executarComportamentoSalaResgate() {
     float posicao = calcularPosicaoLinha();
             
     // Verifica se pelo menos 1 sensor está ativo (linha preta)
-    bool linhaPretasDetectada = false;
+    bool linhaPretaDetectada = false;
     for (int i = 0; i < NUM_SENSORS; i++) {
       if (sensorValues[i] > 500) { // Se algum sensor detectar preto (ajuste o limiar)
         linhaPretaDetectada = true;
