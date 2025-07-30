@@ -411,18 +411,19 @@ void executarComportamentoSalaResgate() {
     // 1. Verificar se encontrou linha preta (saída)
     float posicao = calcularPosicaoLinha();
     
-    // Verifica se todos os sensores estão ativos (linha preta)
-    bool todosAtivos = true;
+    float posicao = calcularPosicaoLinha();
+        
+    // Verifica se pelo menos 1 sensor está ativo (linha preta)
+    bool linhaPretaDetectada = false;
     for (int i = 0; i < NUM_SENSORS; i++) {
-      if (sensorValues[i] < 500) { // Ajuste este valor conforme a calibração
-        todosAtivos = false;
+      if (sensorValues[i] > 500) { // Se algum sensor detectar preto (ajuste o limiar)
+        linhaPretaDetectada = true;
+        break; // Sai do loop assim que detectar
       }
     }
-    
-    if(todosAtivos) { // Todos sensores ativos (linha preta)
+        
+    if(linhaPretaDetectada) { // Se pelo menos 1 sensor vê preto
       printlnA("Linha de saida detectada!");
-      pararMotores();
-      delay(1000);
       estadoAtual = SEGUINDO_LINHA;
       return;
     }
