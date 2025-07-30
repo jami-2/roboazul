@@ -4,7 +4,6 @@
 #include <GY521.h>
 #include "SerialDebug.h"
 #include <NewPing.h>
-#include <QTRSensors.h>
 #include <Servo.h>
 // Modificações:
 // Trocar GY-521 para conexão direta
@@ -31,9 +30,10 @@
 // Constantes de configuração
 #define TEMPO_PRE90 1000
 #define TEMPO_ORBITA 2000
-#define VEL_NORMAL 150  // Velocidade base aumentada para PID
+#define VEL_NORMAL 88
 #define VEL_RESISTENCIA 120
-#define VEL_MAXIMA 255  // Velocidade máxima para os motores
+#define VEL_CURVA 140
+#define VEL_CURVA_EXTREMA 220
 #define INTERVALO_LEITURA 50
 #define DISTANCIA_OBSTACULO 10
 
@@ -45,18 +45,27 @@
 #define DISTANCIA_MINIMA_VIRADA 10
 
 Servo servoUltrassonico;
+// Limiares dos sensores
+#define LIMIAR_EXT_ESQ 240
+#define LIMIAR_CENT_ESQ 110
+#define LIMIAR_CENT_DIR 110
+#define LIMIAR_EXT_DIR 140
 
 // Estados do robô
 enum Estado {
   SEGUINDO_LINHA,
   RESOLVENDO_BIFURCACAO,
   DESVIANDO_OBSTACULO,
-  INICIALIZANDO,
-  SALA_DE_RESGATE,
-  PARADO
+  INICIALIZANDO
 };
 
 // Estruturas de dados
+struct Sensor {
+  uint8_t pin;
+  uint16_t limiar;
+  uint8_t valor;
+};
+
 struct CorSensor {
   Adafruit_TCS34725 tcs;
   bool inicializado = false;
@@ -73,39 +82,24 @@ AF_DCMotor motorFrenteDireito(1);
 AF_DCMotor motorTrasEsquerdo(3);
 AF_DCMotor motorTrasDireito(2);
 
-// Configuração QTR Sensors
-#define NUM_SENSORS 8
-#define TIMEOUT 2500
-#define EMITTER_PIN 2
-
-QTRSensorsRC qtrrc((unsigned char[]) {A0, A1, A2, A3, A4, A5, A6, A7}, 
-              NUM_SENSORS, TIMEOUT, EMITTER_PIN);
-unsigned int sensorValues[NUM_SENSORS];
+Sensor sensores[4] = {
+  {A0, LIMIAR_EXT_ESQ, 0},  // extEsq
+  {A1, LIMIAR_CENT_ESQ, 0}, // centEsq
+  {A2, LIMIAR_CENT_DIR, 0}, // centDir
+  {A3, LIMIAR_EXT_DIR, 0}   // extDir
+};
 
 CorSensor corSensores[2];
 Adafruit_TCS34725 tcs0(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 Adafruit_TCS34725 tcs1(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 
-// Variáveis do PID
-#define Kp 0.1f    // Ganho Proporcional  
-#define Ki 0.001f  // Ganho Integral  
-#define Kd 0.2f    // Ganho Derivativo  
-
-int erro = 0;
-int erroAnterior = 0;
-int integral = 0;
-int derivativo = 0;
-int saidaPID = 0;
-
 // Protótipos de funções
 void setup();
 void loop();
 void lerSensores();
-int calcularPosicaoLinha();
-void calcularPID();
-void aplicarPID(int posicao);
+float calcularPosicaoLinha();
 const char* detectarCor(uint8_t canal);
-void controlarMotores(int velocidadeEsq, int velocidadeDir);
+void controlarMotores(int esqFrente, int dirFrente, int velocidade = VEL_NORMAL);
 void pararMotores();
 void andarReto();
 void andarRapido();
@@ -119,11 +113,10 @@ void ligarLEDs();
 void tcaSelect(uint8_t channel);
 void resolverBifurcacao();
 void desviarObstaculo();
-void calibrarSensores();
 
 void setup() {
   Serial.begin(9600);
-  printlnA("Iniciando seguidor de linha com PID...");
+  printlnA("Iniciando seguidor de linha...");
   Wire.begin();
 
   // Inicialização MPU6050
@@ -156,15 +149,16 @@ void setup() {
 
   vencerResistenciaInicial();
   estadoAtual = SEGUINDO_LINHA;
-}
-
-void calibrarSensores() {
-  printlnA("Calibrando sensores QTR...");
-  for (int i = 0; i < 400; i++) {
-    qtrrc.calibrate();
-    delay(10);
+/*
+  // Configuração SerialDebug
+  #ifndef DEBUG_DISABLE_DEBUGGER
+  debugAddGlobalInt(F("TEMPO_PRE90"), &TEMPO_PRE90);
+  debugAddGlobalInt(F("TEMPO_ORBITA"), &TEMPO_ORBITA);
+  for(int i = 0; i < 4; i++) {
+    debugAddGlobalInt((String("sensor") + i).c_str(), &sensores[i].valor);
   }
-  printlnA("Calibração concluída!");
+  #endif
+*/
 }
 
 void loop() {
@@ -176,8 +170,9 @@ void loop() {
       estadoAtual = SEGUINDO_LINHA;
       break;
       
-    case SEGUINDO_LINHA:      
-      // Verificação de obstáculo
+    case SEGUINDO_LINHA:
+        
+        // Verificação de obstáculo
       int distancia = sonar.ping_cm();
       if(distancia < DISTANCIA_OBSTACULO && distancia != 0) {
         estadoAtual = DESVIANDO_OBSTACULO;
@@ -195,16 +190,23 @@ void loop() {
       }
       
       lerSensores();
-      int posicao = calcularPosicaoLinha();
+
+      float media = calcularPosicaoLinha();
+
     
+        
       // Verificação de bifurcação
-      if(posicao == -999) {
+      if(media == 69) {
         estadoAtual = RESOLVENDO_BIFURCACAO;
         break;
       }
         
-      // Aplicar controle PID
-      aplicarPID(posicao);
+      // Controle normal de seguimento
+      if(media < -1.5) virarForte(ESQUERDA);
+      else if(media > 1.5) virarForte(DIREITA);
+      else if(media < -0.7) virar(ESQUERDA);
+      else if(media > 0.7) virar(DIREITA);
+      else andarReto();
       break;
       
     case RESOLVENDO_BIFURCACAO:
@@ -229,101 +231,165 @@ void loop() {
 }
 
 void lerSensores() {
-  qtrrc.read(sensorValues);
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    printV("Sensor"); printV(i); printV(":"); printlnV(sensorValues[i]);
+  for(int i = 0; i < 4; i++) {
+    sensores[i].valor = analogRead(sensores[i].pin) > sensores[i].limiar ? 1 : 0;
+    printV("Sensor"); printV(i); printV(":"); printlnV(analogRead(sensores[i].pin));
   }
 }
 
-int calcularPosicaoLinha() {
-  unsigned int position = qtrrc.readLine(sensorValues);
+float calcularPosicaoLinha() {
+  int total = sensores[0].valor + sensores[1].valor + sensores[2].valor + sensores[3].valor;
   
-  // Verificar se todos os sensores estão detectando linha (bifurcação)
-  bool todosAtivos = true;
-  bool nenhumAtivo = true;
+  if(total == 4 || (sensores[0].valor && sensores[3].valor)) {
+    pararMotores();
+    return 69; // Código especial para bifurcação
+  }
   
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    if (sensorValues[i] < 500) {
-      todosAtivos = false;
-    } else {
-      nenhumAtivo = false;
+  if(total == 0) return 0;
+  
+  return (sensores[0].valor * -2 + sensores[1].valor * -1 + 
+          sensores[2].valor * 1 + sensores[3].valor * 2) / (float)total;
+}
+
+const char* detectarCor(uint8_t canal) {
+  if(canal > 1 || !corSensores[canal].inicializado) return "erro";
+  
+  tcaSelect(canal);
+  uint16_t r, g, b, c;
+  corSensores[canal].tcs.getRawData(&r, &g, &b, &c);
+  
+  if(r < 3000 && g < 4400 && b < 3400) return "preto";
+  if(r > 6000 && g > 7500 && b > 6500) return "branco";
+  return "colorido";
+}
+
+void resolverBifurcacao() {
+  ligarLEDs();
+  const char* corA = detectarCor(0);
+  const char* corB = detectarCor(1);
+  desligarLEDs();
+  
+  vencerResistenciaInicial();
+  
+  if(strcmp(corA, "preto") == 0 && strcmp(corB, "preto") == 0) {
+    andarTras();
+    delay(500);
+  }
+  else if(strcmp(corA, "preto") == 0) {
+    virarForte(DIREITA);
+    delay(50);
+  }
+  else if(strcmp(corB, "preto") == 0) {
+    virarForte(ESQUERDA);
+    delay(50);
+  }
+  else if(strcmp(corA, "colorido") == 0 && strcmp(corB, "colorido") != 0) {
+    andarReto();
+    delay(TEMPO_PRE90);
+    virarComGiro(90, ESQUERDA);
+  }
+  else if(strcmp(corA, "colorido") != 0 && strcmp(corB, "colorido") == 0) {
+    andarReto();
+    delay(TEMPO_PRE90);
+    virarComGiro(90, DIREITA);
+  }
+  else if(strcmp(corA, "colorido") == 0 && strcmp(corB, "colorido") == 0) {
+    virarComGiro(90, DIREITA);
+    virarComGiro(90, DIREITA);
+  }
+  else {
+    andarReto();
+    delay(1350);
+  }
+}
+
+void desviarObstaculo() {
+  pararMotores();
+  delay(100);
+  virarComGiro(90, ESQUERDA);
+  pararMotores();
+  delay(100);
+  
+  andarReto();
+  delay(TEMPO_ORBITA / 2);
+  
+  unsigned long ultimaVirada = millis();
+  
+  while(true) {
+    lerSensores();
+    if(sensores[0].valor || sensores[1].valor || sensores[2].valor || sensores[3].valor) {
+      pararMotores();
+      virarComGiro(90, ESQUERDA);
+      return;
     }
+    
+    andarReto();
+    
+    if(millis() - ultimaVirada >= 2000) {
+      pararMotores();
+      delay(100);
+      virarComGiro(90, DIREITA);
+      pararMotores();
+      delay(100);
+      ultimaVirada = millis();
+    }
+    
+    delay(10);
   }
-  
-  if (todosAtivos || (sensorValues[0] > 500 && sensorValues[NUM_SENSORS-1] > 500)) {
-    return -999; // Código especial para bifurcação
-  }
-  
-  if (nenhumAtivo) {
-    return 0;
-  }
-  
-  // Retorna a posição da linha (0-7000)
-  return position;
 }
 
-void calcularPID() {
-  // Cálculo dos componentes do PID
-  integral += erro;
-  derivativo = erro - erroAnterior;
+void controlarMotores(int esqFrente, int dirFrente, int velocidade) {
+  motorFrenteEsquerdo.setSpeed(velocidade);
+  motorFrenteDireito.setSpeed(velocidade);
+  motorTrasEsquerdo.setSpeed(velocidade);
+  motorTrasDireito.setSpeed(velocidade);
   
-  // Fórmula do PID
-  saidaPID = (Kp * erro) + (Ki * integral) + (Kd * derivativo);
-  
-  // Atualiza o erro anterior para o próximo cálculo
-  erroAnterior = erro;
+  motorFrenteEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
+  motorTrasEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
+  motorFrenteDireito.run(dirFrente ? FORWARD : BACKWARD);
+  motorTrasDireito.run(dirFrente ? FORWARD : BACKWARD);
 }
 
-void aplicarPID(int posicao) {
-  // Calcula o erro (posição ideal é 3500 para 8 sensores)
-  erro = posicao - 3500;
-  
-  // Calcula o PID
-  calcularPID();
-  
-  // Ajusta as velocidades dos motores baseado no PID
-  int velocidadeEsq = VEL_NORMAL + saidaPID;
-  int velocidadeDir = VEL_NORMAL - saidaPID;
-  
-  // Limita as velocidades para não ultrapassar o máximo
-  velocidadeEsq = constrain(velocidadeEsq, -VEL_MAXIMA, VEL_MAXIMA);
-  velocidadeDir = constrain(velocidadeDir, -VEL_MAXIMA, VEL_MAXIMA);
-  
-  // Aplica as velocidades
-  controlarMotores(velocidadeEsq, velocidadeDir);
-  
-  // Debug
-  printD("Erro:"); printD(erro); 
-  printD(" PID:"); printD(saidaPID);
-  printD(" Esq:"); printD(velocidadeEsq);
-  printD(" Dir:"); printlnD(velocidadeDir);
+void pararMotores() {
+  motorFrenteEsquerdo.run(RELEASE);
+  motorFrenteDireito.run(RELEASE);
+  motorTrasEsquerdo.run(RELEASE);
+  motorTrasDireito.run(RELEASE);
 }
 
-// ... (as demais funções permanecem semelhantes, exceto controlarMotores)
+void andarReto() {
+  controlarMotores(1, 1, VEL_NORMAL);
+}
 
-void controlarMotores(int velocidadeEsq, int velocidadeDir) {
-  // Motor esquerdo
-  motorFrenteEsquerdo.setSpeed(abs(velocidadeEsq));
-  motorTrasEsquerdo.setSpeed(abs(velocidadeEsq));
+void andarRapido() {
+  controlarMotores(1, 1, 200);
+}
+
+void andarTras() {
+  controlarMotores(0, 0, VEL_NORMAL + 10);
+}
+
+void virar(int direcao) {
+  controlarMotores(direcao, !direcao, VEL_CURVA);
+}
+
+void virarForte(int direcao) {
+  controlarMotores(direcao, !direcao, VEL_CURVA_EXTREMA);
+}
+
+void virarComGiro(float anguloAlvo, int direcao) {
+  float yawInicial = mpu.getYaw();
+  float alvoYaw = fmod((yawInicial + (direcao == DIREITA ? anguloAlvo : -anguloAlvo) + 360), 360);
   
-  if(velocidadeEsq > 0) {
-    motorFrenteEsquerdo.run(FORWARD);
-    motorTrasEsquerdo.run(FORWARD);
-  } else {
-    motorFrenteEsquerdo.run(BACKWARD);
-    motorTrasEsquerdo.run(BACKWARD);
-  }
-  
-  // Motor direito
-  motorFrenteDireito.setSpeed(abs(velocidadeDir));
-  motorTrasDireito.setSpeed(abs(velocidadeDir));
-  
-  if(velocidadeDir > 0) {
-    motorFrenteDireito.run(FORWARD);
-    motorTrasDireito.run(FORWARD);
-  } else {
-    motorFrenteDireito.run(BACKWARD);
-    motorTrasDireito.run(BACKWARD);
+  while(true) {
+    mpu.readGyro();
+    float yawAtual = fmod(mpu.getYaw(), 360);
+    float delta = fmod((yawAtual - alvoYaw + 360), 360);
+    
+    if(delta < 5 || delta > 355) break;
+    
+    virar(direcao);
+    delay(10);
   }
 }
 
@@ -404,60 +470,4 @@ int lerUltrassonicoLateral(int angulo) {
   printD("): "); printlnD(distancia);
   
   return distancia;
-}
-
-// Adicione estas implementações no seu código Arduino
-
-void desligarLEDs() {
-  digitalWrite(LEDA, LOW);
-  digitalWrite(LEDB, LOW);
-}
-
-void ligarLEDs() {
-  digitalWrite(LEDA, HIGH);
-  digitalWrite(LEDB, HIGH);
-}
-
-void pararMotores() {
-  motorFrenteEsquerdo.run(RELEASE);
-  motorFrenteDireito.run(RELEASE);
-  motorTrasEsquerdo.run(RELEASE);
-  motorTrasDireito.run(RELEASE);
-}
-
-void tcaSelect(uint8_t channel) {
-  if (channel > 7) return;
-  Wire.beginTransmission(TCAADDR);
-  Wire.write(1 << channel);
-  Wire.endTransmission();
-}
-
-void vencerResistenciaInicial() {
-  controlarMotores(1, 1, VEL_RESISTENCIA);
-  delay(100);
-}
-
-const char* detectarCor(uint8_t canal) {
-  if(canal > 1 || !corSensores[canal].inicializado) return "erro";
-  
-  tcaSelect(canal);
-  uint16_t r, g, b, c;
-  corSensores[canal].tcs.getRawData(&r, &g, &b, &c);
-  
-  if(r < 3000 && g < 4400 && b < 3400) return "preto";
-  if(r > 6000 && g > 7500 && b > 6500) return "branco";
-  if(r > 9000 && g < 5000 && b < 5000) return "vermelho";
-  return "colorido";
-}
-
-void controlarMotores(int esqFrente, int dirFrente, int velocidade) {
-  motorFrenteEsquerdo.setSpeed(velocidade);
-  motorFrenteDireito.setSpeed(velocidade);
-  motorTrasEsquerdo.setSpeed(velocidade);
-  motorTrasDireito.setSpeed(velocidade);
-  
-  motorFrenteEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
-  motorTrasEsquerdo.run(esqFrente ? FORWARD : BACKWARD);
-  motorFrenteDireito.run(dirFrente ? FORWARD : BACKWARD);
-  motorTrasDireito.run(dirFrente ? FORWARD : BACKWARD);
 }
