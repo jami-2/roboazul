@@ -175,55 +175,57 @@ int lerSensoresQTR() {
 }
 
 float calcularPosicaoLinha() {
-  int position = lerSensoresQTR();
+  // Reads sensors using calibration, returns 0-7000 (for 8 sensors)
+  uint16_t position = qtrrc.readLineBlack(sensorValues); 
   
-  bool todosAtivos = true;
-  
-  for (int i = 0; i < NUM_SENSORS; i++) {
-    if (sensorValues[i] < 500) { // Ajuste este valor conforme calibração
-      todosAtivos = false;
+  // Debug: print sensor values
+  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
+    Serial.print(sensorValues[i]);
+    Serial.print('\t');
+  }
+  Serial.println(position);
+
+  // Check if all sensors see white (lost line)
+  bool lostLine = true;
+  for (uint8_t i = 0; i < NUM_SENSORS; i++) {
+    if (sensorValues[i] < qtrrc.calibratedMaximumOn[i] / 2) { // Adjust threshold as needed
+      lostLine = false;
+      break;
     }
   }
-  
-  if (todosAtivos) {
-    estadoAtual = RESOLVENDO_BIFURCACAO; // Mudança direta de estado aqui
-    return 0; // Valor arbitrário, pois o estado já foi alterado
+
+  if (lostLine) {
+    estadoAtual = RESOLVENDO_BIFURCACAO;
+    return 3500; // Return center position to avoid abrupt stops
   }
-  
-  
+
   return position;
 }
 
 void seguirLinhaPID() {
-  // Lê os sensores e obtém a posição bruta (0-7000)
-  uint16_t position = qtrrc.readLine(sensorValues);
+  uint16_t position = qtrrc.readLineBlack(sensorValues); // Uses calibration
+  int erro = position - 3500; // 3500 = center
   
-  // Erro bruto (3500 = centro)
-  int erro = position - 3500;
-  
-  // PID sem dó
+  // Rest of PID logic remains the same
   integral += erro;
   int derivativo = erro - erroAnterior;
   erroAnterior = erro;
   
   int correcao = KP * erro + KI * integral + KD * derivativo;
   
-  // Aplica correção (velocidade base 150)
-  int velEsq = 150 - correcao;
-  int velDir = 150 + correcao;
+  int velEsq = VEL_BASE - correcao;
+  int velDir = VEL_BASE + correcao;
   
-  // Limita as velocidades
-  int velocidadeEsquerda = constrain(velEsq, -255, 255);
-  int velocidadeDireita = constrain(velDir, -255, 255);
-
-  // Controla os motores
-  controlarMotores(velocidadeEsquerda, velocidadeDireita);
+  velEsq = constrain(velEsq, -255, 255);
+  velDir = constrain(velDir, -255, 255);
   
-  // Debug (opcional)
-  Serial.print("Erro: "); Serial.print(erro);
-  Serial.print(" Correcao: "); Serial.print(correcao);
-  Serial.print(" VelEsq: "); Serial.print(velocidadeEsquerda);
-  Serial.print(" VelDir: "); Serial.println(velocidadeDireita);
+  controlarMotores(velEsq, velDir);
+  
+  // Debug
+  Serial.print("Position: "); Serial.print(position);
+  Serial.print(" Erro: "); Serial.print(erro);
+  Serial.print(" VelEsq: "); Serial.print(velEsq);
+  Serial.print(" VelDir: "); Serial.println(velDir);
 }
 
 void loop() {
