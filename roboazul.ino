@@ -5,6 +5,7 @@
 #include "SerialDebug.h"
 #include <NewPing.h>
 #include <Servo.h>
+#include <QTRSensors.h> // Adicionando a biblioteca Pololu QTR
 // Modificações:
 // Trocar GY-521 para conexão direta
 // Instalar QTR no chão, entre as rodas
@@ -44,28 +45,26 @@
 #define DISTANCIA_PARADA 15
 #define DISTANCIA_MINIMA_VIRADA 10
 
+// Configuração dos sensores QTR
+#define NUM_SENSORS 4      // Número de sensores QTR
+#define TIMEOUT 2500       // Tempo de espera para o sensor em microssegundos
+#define EMITTER_PIN 2      // Pino para controle do LED IR (pode ser QTR_NO_EMITTER_PIN)
+
 Servo servoUltrassonico;
-// Limiares dos sensores
-#define LIMIAR_EXT_ESQ 240
-#define LIMIAR_CENT_ESQ 110
-#define LIMIAR_CENT_DIR 110
-#define LIMIAR_EXT_DIR 140
+QTRSensorsRC qtrrc((unsigned char[]) {A0, A1, A2, A3}, NUM_SENSORS, TIMEOUT, EMITTER_PIN);
+unsigned int sensorValues[NUM_SENSORS];
 
 // Estados do robô
 enum Estado {
   SEGUINDO_LINHA,
   RESOLVENDO_BIFURCACAO,
   DESVIANDO_OBSTACULO,
-  INICIALIZANDO
+  INICIALIZANDO,
+  SALA_DE_RESGATE,
+  PARADO
 };
 
 // Estruturas de dados
-struct Sensor {
-  uint8_t pin;
-  uint16_t limiar;
-  uint8_t valor;
-};
-
 struct CorSensor {
   Adafruit_TCS34725 tcs;
   bool inicializado = false;
@@ -82,37 +81,9 @@ AF_DCMotor motorFrenteDireito(1);
 AF_DCMotor motorTrasEsquerdo(3);
 AF_DCMotor motorTrasDireito(2);
 
-Sensor sensores[4] = {
-  {A0, LIMIAR_EXT_ESQ, 0},  // extEsq
-  {A1, LIMIAR_CENT_ESQ, 0}, // centEsq
-  {A2, LIMIAR_CENT_DIR, 0}, // centDir
-  {A3, LIMIAR_EXT_DIR, 0}   // extDir
-};
-
 CorSensor corSensores[2];
 Adafruit_TCS34725 tcs0(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 Adafruit_TCS34725 tcs1(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
-
-// Protótipos de funções
-void setup();
-void loop();
-void lerSensores();
-float calcularPosicaoLinha();
-const char* detectarCor(uint8_t canal);
-void controlarMotores(int esqFrente, int dirFrente, int velocidade = VEL_NORMAL);
-void pararMotores();
-void andarReto();
-void andarRapido();
-void andarTras();
-void virar(int direcao);
-void virarForte(int direcao);
-void virarComGiro(float anguloAlvo, int direcao);
-void vencerResistenciaInicial();
-void desligarLEDs();
-void ligarLEDs();
-void tcaSelect(uint8_t channel);
-void resolverBifurcacao();
-void desviarObstaculo();
 
 void setup() {
   Serial.begin(9600);
@@ -134,12 +105,12 @@ void setup() {
   // Inicialização motores
   pararMotores();
 
-  //Inicialização sala de resgate
+  // Inicialização sala de resgate
   servoUltrassonico.attach(SERVO_PIN);
   servoUltrassonico.write(ANGULO_FRENTE);
 
   // Calibração dos sensores QTR
-  calibrarSensores();
+  calibrarSensoresQTR();
 
   // Inicialização sensores de cor
   tcaSelect(0);
@@ -149,16 +120,73 @@ void setup() {
 
   vencerResistenciaInicial();
   estadoAtual = SEGUINDO_LINHA;
-/*
-  // Configuração SerialDebug
-  #ifndef DEBUG_DISABLE_DEBUGGER
-  debugAddGlobalInt(F("TEMPO_PRE90"), &TEMPO_PRE90);
-  debugAddGlobalInt(F("TEMPO_ORBITA"), &TEMPO_ORBITA);
-  for(int i = 0; i < 4; i++) {
-    debugAddGlobalInt((String("sensor") + i).c_str(), &sensores[i].valor);
+}
+
+void calibrarSensoresQTR() {
+  printlnA("Calibrando sensores QTR...");
+  delay(500);
+  
+  // Rotina de calibração manual (mover o robô sobre a linha durante a calibração)
+  for (int i = 0; i < 200; i++) {
+    qtrrc.calibrate();
+    delay(20);
   }
-  #endif
-*/
+  
+  printlnA("Calibracao completa. Valores minimos:");
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    Serial.print(qtrrc.calibratedMinimumOn[i]);
+    Serial.print(' ');
+  }
+  Serial.println();
+  
+  printlnA("Valores maximos:");
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    Serial.print(qtrrc.calibratedMaximumOn[i]);
+    Serial.print(' ');
+  }
+  Serial.println();
+}
+
+void lerSensoresQTR() {
+  // Lê os sensores QTR e armazena os valores em sensorValues
+  int position = qtrrc.readLine(sensorValues);
+  
+  // Debug: mostra os valores dos sensores
+  for (unsigned char i = 0; i < NUM_SENSORS; i++) {
+    Serial.print(sensorValues[i]);
+    Serial.print('\t');
+  }
+  Serial.println(position);
+  
+  return position;
+}
+
+float calcularPosicaoLinha() {
+  int position = lerSensoresQTR();
+  
+  // Verifica se todos os sensores estão detectando linha preta (bifurcação)
+  bool todosAtivos = true;
+  bool nenhumAtivo = true;
+  
+  for (int i = 0; i < NUM_SENSORS; i++) {
+    if (sensorValues[i] < 500) { // Ajuste este valor conforme a calibração
+      todosAtivos = false;
+    } else {
+      nenhumAtivo = false;
+    }
+  }
+  
+  if (todosAtivos) {
+    pararMotores();
+    return 69; // Código especial para bifurcação
+  }
+  
+  if (nenhumAtivo) {
+    return 0; // Nenhum sensor detectando linha
+  }
+  
+  // Retorna a posição relativa da linha (0-3000, com 1500 sendo o centro)
+  return (position - 1500) / 1000.0; // Normaliza para -1.5 a +1.5
 }
 
 void loop() {
@@ -171,8 +199,7 @@ void loop() {
       break;
       
     case SEGUINDO_LINHA:
-        
-        // Verificação de obstáculo
+      // Verificação de obstáculo
       int distancia = sonar.ping_cm();
       if(distancia < DISTANCIA_OBSTACULO && distancia != 0) {
         estadoAtual = DESVIANDO_OBSTACULO;
@@ -189,12 +216,8 @@ void loop() {
         break;
       }
       
-      lerSensores();
-
       float media = calcularPosicaoLinha();
-
     
-        
       // Verificação de bifurcação
       if(media == 69) {
         estadoAtual = RESOLVENDO_BIFURCACAO;
@@ -228,27 +251,6 @@ void loop() {
       printV("PRONTO!");
       break;
   }
-}
-
-void lerSensores() {
-  for(int i = 0; i < 4; i++) {
-    sensores[i].valor = analogRead(sensores[i].pin) > sensores[i].limiar ? 1 : 0;
-    printV("Sensor"); printV(i); printV(":"); printlnV(analogRead(sensores[i].pin));
-  }
-}
-
-float calcularPosicaoLinha() {
-  int total = sensores[0].valor + sensores[1].valor + sensores[2].valor + sensores[3].valor;
-  
-  if(total == 4 || (sensores[0].valor && sensores[3].valor)) {
-    pararMotores();
-    return 69; // Código especial para bifurcação
-  }
-  
-  if(total == 0) return 0;
-  
-  return (sensores[0].valor * -2 + sensores[1].valor * -1 + 
-          sensores[2].valor * 1 + sensores[3].valor * 2) / (float)total;
 }
 
 const char* detectarCor(uint8_t canal) {
