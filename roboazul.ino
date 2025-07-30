@@ -100,7 +100,7 @@ Adafruit_TCS34725 tcs1(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_60X);
 
 void setup() {
   Serial.begin(9600);
-  printlnA("Iniciando seguidor de linha...");
+  Serial.println("Iniciando seguidor de linha...");
   Wire.begin();
 
   // Inicialização MPU6050
@@ -136,7 +136,7 @@ void setup() {
 }
 
 void calibrarSensoresQTR() {
-  printlnA("Calibrando sensores QTR...");
+  Serial.println("Calibrando sensores QTR...");
   delay(500);
   
   // Rotina de calibração manual (mover o robô sobre a linha durante a calibração)
@@ -145,14 +145,14 @@ void calibrarSensoresQTR() {
     delay(20);
   }
   
-  printlnA("Calibracao completa. Valores minimos:");
+  Serial.println("Calibracao completa. Valores minimos:");
   for (int i = 0; i < NUM_SENSORS; i++) {
     Serial.print(qtrrc.calibratedMinimumOn[i]);
     Serial.print(' ');
   }
   Serial.println();
   
-  printlnA("Valores maximos:");
+  Serial.println("Valores maximos:");
   for (int i = 0; i < NUM_SENSORS; i++) {
     Serial.print(qtrrc.calibratedMaximumOn[i]);
     Serial.print(' ');
@@ -191,7 +191,7 @@ float calcularPosicaoLinha() {
   }
   
   
-  return position 
+  return position;
 }
 
 void seguirLinhaPID() {
@@ -213,8 +213,8 @@ void seguirLinhaPID() {
   int velDir = 150 + correcao;
   
   // Limita as velocidades
-  velocidadeEsquerda = constrain(velEsq, -255, 255);
-  velocidadeDireita = constrain(velDir, -255, 255);
+  int velocidadeEsquerda = constrain(velEsq, -255, 255);
+  int velocidadeDireita = constrain(velDir, -255, 255);
 
   // Controla os motores
   controlarMotores(velocidadeEsquerda, velocidadeDireita);
@@ -227,7 +227,6 @@ void seguirLinhaPID() {
 }
 
 void loop() {
-  debugHandle();
 
   switch(estadoAtual) {
     case INICIALIZANDO:
@@ -426,7 +425,7 @@ void virarComGiro(float anguloAlvo, int direcao) {
 
 
 void entrarSalaResgate() {
-  printlnA("Entrando na sala de resgate...");
+  Serial.println("Entrando na sala de resgate...");
   estadoAtual = SALA_DE_RESGATE;
 }
 
@@ -445,7 +444,7 @@ void executarComportamentoSalaResgate() {
     }
         
     if(linhaPretaDetectada) { // Se pelo menos 1 sensor vê preto
-      printlnA("Linha de saida detectada!");
+      Serial.println("Linha de saida detectada!");
       estadoAtual = SEGUINDO_LINHA;
       return;
     }
@@ -458,7 +457,7 @@ void executarComportamentoSalaResgate() {
     
     if(distanciaFrontal < DISTANCIA_PARADA && distanciaFrontal != 0) {
       pararMotores();
-      printlnA("Obstaculo frontal detectado!");
+      Serial.println("Obstaculo frontal detectado!");
       
       // 4. Verificar lados
       int distanciaEsquerda = lerUltrassonicoLateral(ANGULO_ESQUERDA);
@@ -471,10 +470,10 @@ void executarComportamentoSalaResgate() {
       
       // 5. Decidir direção
       if(distanciaEsquerda > distanciaDireita) {
-        printlnA("Virando para esquerda (mais espaco)");
+        Serial.println("Virando para esquerda (mais espaco)");
         virarComGiro(90, ESQUERDA);
       } else {
-        printlnA("Virando para direita (mais espaco)");
+        Serial.println("Virando para direita (mais espaco)");
         virarComGiro(90, DIREITA);
       }
       
@@ -490,7 +489,7 @@ void executarComportamentoSalaResgate() {
 int lerUltrassonicoFrontal() {
   // Já temos a função sonar.ping_cm() para o frontal
   int distancia = sonar.ping_cm();
-  printD("Distancia frontal: "); printlnD(distancia);
+  Serial.print("Distancia frontal: "); Serial.println(distancia);
   return distancia;
 }
 
@@ -502,9 +501,9 @@ int lerUltrassonicoLateral(int angulo) {
   NewPing sonarLateral(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
   int distancia = sonarLateral.ping_cm();
   
-  printD("Distancia lateral ("); 
-  printD(angulo == ANGULO_ESQUERDA ? "esq" : "dir");
-  printD("): "); printlnD(distancia);
+  Serial.print("Distancia lateral ("); 
+  Serial.print(angulo == ANGULO_ESQUERDA ? "esq" : "dir");
+  Serial.print("): "); Serial.println(distancia);
   
   return distancia;
 }
