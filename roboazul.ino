@@ -272,7 +272,7 @@ void loop() {
       
     case PARADO:
       pararMotores();
-      printV("PRONTO!");
+      Serial.println("PRONTO!");
       break;
   }
 }
