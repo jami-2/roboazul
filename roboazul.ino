@@ -177,57 +177,45 @@ int lerSensoresQTR() {
 float calcularPosicaoLinha() {
   int position = lerSensoresQTR();
   
-  // Verifica se todos os sensores estão detectando linha preta (bifurcação)
   bool todosAtivos = true;
-  bool nenhumAtivo = true;
   
   for (int i = 0; i < NUM_SENSORS; i++) {
-    if (sensorValues[i] < 500) { // Ajuste este valor conforme a calibração
+    if (sensorValues[i] < 500) { // Ajuste este valor conforme calibração
       todosAtivos = false;
-    } else {
-      nenhumAtivo = false;
     }
   }
   
   if (todosAtivos) {
-    pararMotores();
-    return 69; // Código especial para bifurcação
+    estadoAtual = RESOLVENDO_BIFURCACAO; // Mudança direta de estado aqui
+    return 0; // Valor arbitrário, pois o estado já foi alterado
   }
   
-  if (nenhumAtivo) {
-    return 0; // Nenhum sensor detectando linha
-  }
   
-  // Retorna a posição relativa da linha (0-3000, com 1500 sendo o centro)
-  return (position - 1500) / 1000.0; // Normaliza para -1.5 a +1.5
-}
-float calcularPID(float erro) {
-  integral += erro;
-  float derivativo = erro - erroAnterior;
-  erroAnterior = erro;
-  
-  float saidaPID = KP * erro + KI * integral + KD * derivativo;
-  return saidaPID;
+  return position 
 }
 
 void seguirLinhaPID() {
-  // Lê a posição da linha (0-7000, com 3500 sendo o centro)
+  // Lê os sensores e obtém a posição bruta (0-7000)
   uint16_t position = qtrrc.readLine(sensorValues);
   
-  // Calcula o erro (normalizado entre -1 e 1)
-  float erro = (position - 3500) / 3500.0;
+  // Erro bruto (3500 = centro)
+  int erro = position - 3500;
   
-  // Calcula a correção PID
-  float correcao = calcularPID(erro);
+  // PID sem dó
+  integral += erro;
+  int derivativo = erro - erroAnterior;
+  erroAnterior = erro;
   
-  // Aplica a correção às velocidades dos motores
-  int velocidadeEsquerda = VEL_BASE - (correcao * VEL_BASE);
-  int velocidadeDireita = VEL_BASE + (correcao * VEL_BASE);
+  int correcao = KP * erro + KI * integral + KD * derivativo;
   
-  // Limita as velocidades para valores válidos
-  velocidadeEsquerda = constrain(velocidadeEsquerda, -255, 255);
-  velocidadeDireita = constrain(velocidadeDireita, -255, 255);
+  // Aplica correção (velocidade base 150)
+  int velEsq = 150 - correcao;
+  int velDir = 150 + correcao;
   
+  // Limita as velocidades
+  velocidadeEsquerda = constrain(velEsq, -255, 255);
+  velocidadeDireita = constrain(velDir, -255, 255);
+
   // Controla os motores
   controlarMotores(velocidadeEsquerda, velocidadeDireita);
   
