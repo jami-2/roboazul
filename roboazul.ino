@@ -410,11 +410,9 @@ void executarComportamentoSalaResgate() {
   while(estadoAtual == SALA_DE_RESGATE) {
     // 1. Verificar se encontrou linha preta (saída)
     float posicao = calcularPosicaoLinha();
-    
-    float posicao = calcularPosicaoLinha();
-        
+            
     // Verifica se pelo menos 1 sensor está ativo (linha preta)
-    bool linhaPretaDetectada = false;
+    bool linhaPretasDetectada = false;
     for (int i = 0; i < NUM_SENSORS; i++) {
       if (sensorValues[i] > 500) { // Se algum sensor detectar preto (ajuste o limiar)
         linhaPretaDetectada = true;
