@@ -2,7 +2,6 @@
 #include <Wire.h>
 #include "Adafruit_TCS34725.h"
 #include <GY521.h>
-#include "SerialDebug.h"
 #include <NewPing.h>
 #include <Servo.h>
 #include <QTRSensors.h> // Adicionando a biblioteca Pololu QTR
