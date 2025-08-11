@@ -1,0 +1,113 @@
+#include <AFMotor.h>
+#include <Wire.h>
+#include "Adafruit_TCS34725.h"
+#include <NewPing.h>
+#include <Servo.h>
+
+// Motor shield
+AF_DCMotor motorEsq(3); // Motor esquerdo conectado ao M3
+AF_DCMotor motorDir(4); // Motor direito conectado ao M4
+
+// Sensor de cor TCS34725
+Adafruit_TCS34725 tcs = Adafruit_TCS34725(TCS34725_INTEGRATIONTIME_50MS, TCS34725_GAIN_4X);
+
+// Sensor ultrassom
+#define TRIGGER_PIN 48
+#define ECHO_PIN 49
+#define MAX_DISTANCE 200 // em cm
+NewPing sonar(TRIGGER_PIN, ECHO_PIN, MAX_DISTANCE);
+
+// Servo para alguma função (exemplo: braço)
+Servo servoArm;
+#define SERVO_PIN 9
+
+// Sensores de linha
+#define SENSOR_ESQ A1
+#define SENSOR_DIR A0
+
+// Variáveis globais
+int sensorEsqVal = 0;
+int sensorDirVal = 0;
+
+void setup() {
+  Serial.begin(9600);
+
+  // Inicializa motores
+  motorEsq.setSpeed(150); // Ajuste a velocidade conforme necessário
+  motorDir.setSpeed(150);
+
+  // Inicializa sensor de cor
+  if (!tcs.begin()) {
+    Serial.println("Erro: Sensor de cor TCS34725 não encontrado!");
+    while (1);
+  }
+
+  // Inicializa servo
+  servoArm.attach(SERVO_PIN);
+  servoArm.write(90); // Posição neutra inicial
+
+  // Configura entradas dos sensores de linha
+  pinMode(SENSOR_ESQ, INPUT);
+  pinMode(SENSOR_DIR, INPUT);
+
+  Serial.println("Setup finalizado.");
+}
+
+void loop() {
+  // Leitura sensores de linha
+  sensorEsqVal = analogRead(SENSOR_ESQ);
+  sensorDirVal = analogRead(SENSOR_DIR);
+
+  // Debug linhas
+  Serial.print("Linha Esquerda: ");
+  Serial.print(sensorEsqVal);
+  Serial.print(" | Linha Direita: ");
+  Serial.println(sensorDirVal);
+
+  // Controle dos motores baseado nos sensores de linha
+  controleLinha(sensorEsqVal, sensorDirVal);
+
+  // Leitura sensor ultrassom
+  int distancia = sonar.ping_cm();
+  Serial.print("Distância ultrassom: ");
+  Serial.print(distancia);
+  Serial.println(" cm");
+
+  // Leitura sensor de cor
+  uint16_t r, g, b, c;
+  tcs.getRawData(&r, &g, &b, &c);
+  Serial.print("Cor detectada - R:");
+  Serial.print(r);
+  Serial.print(" G:");
+  Serial.print(g);
+  Serial.print(" B:");
+  Serial.println(b);
+
+  delay(100); // Ajuste conforme necessidade
+}
+
+void controleLinha(int esq, int dir) {
+  // Valores limiares - ajustar conforme o sensor e a superfície
+  int limiar = 500;
+
+  bool detectaEsq = (esq < limiar);
+  bool detectaDir = (dir < limiar);
+
+  if (detectaEsq && detectaDir) {
+    // Ambos sensores detectam linha preta - segue em frente
+    motorEsq.run(FORWARD);
+    motorDir.run(FORWARD);
+  } else if (detectaEsq && !detectaDir) {
+    // Desvia para direita
+    motorEsq.run(FORWARD);
+    motorDir.run(BACKWARD);
+  } else if (!detectaEsq && detectaDir) {
+    // Desvia para esquerda
+    motorEsq.run(BACKWARD);
+    motorDir.run(FORWARD);
+  } else {
+    // Nenhum sensor detecta linha - para
+    motorEsq.run(RELEASE);
+    motorDir.run(RELEASE);
+  }
+}
